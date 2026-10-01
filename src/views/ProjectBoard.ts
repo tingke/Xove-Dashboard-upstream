@@ -10,6 +10,7 @@ import { computeWindow, filterWithOrig } from '../data/virtualList';
 import { UI_TEXT, MODAL_TEXT } from '../constants';
 import { t, tArr } from '../i18n';
 import { ICON_gantt, ICON_list, ICON_calendar, ICON_kanban, injectSvg } from '../icons';
+import type { DashboardPage } from './PomoStats';
 
 /** 宿主接口：ProjectBoard 渲染器所需的宿主依赖。 */
 export interface ProjectHost {
@@ -27,7 +28,7 @@ export interface ProjectHost {
 		saveSettings(): Promise<void>;
 	};
 	boardEl: HTMLElement | null;
-	currentPage: 'home' | 'project' | 'opportunity';
+	currentPage: DashboardPage;
 	exitEditMode(): void;
 	selectedProject: string | null;
 	showToast(message: string, kind?: 'success' | 'error'): void;
@@ -69,7 +70,7 @@ export class ProjectBoard {
 	private get plugin() { return this.host.plugin; }
 	private get boardEl() { return this.host.boardEl; }
 	private get currentPage() { return this.host.currentPage; }
-	private set currentPage(v: 'home' | 'project' | 'opportunity') { this.host.currentPage = v; }
+	private set currentPage(v: DashboardPage) { this.host.currentPage = v; }
 	private get selectedProject() { return this.host.selectedProject; }
 	private set selectedProject(v: string | null) { this.host.selectedProject = v; }
 	private get showToast() { return this.host.showToast.bind(this.host); }
@@ -116,6 +117,7 @@ export class ProjectBoard {
 		this.boardEl.addClass('po-board');
 		this.boardEl.removeClass('ad-board');
 		this.boardEl.removeClass('op-board');
+		this.boardEl.removeClass('ps-board');
 		this.currentPage = 'project';
 
 		this.currentProjects = projects;
