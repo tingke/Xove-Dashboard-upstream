@@ -11,6 +11,7 @@ import type { ParseIssue } from '../data/parserDiagnostics';
 import { DashboardStore } from '../data/dashboardStore';
 import { OpportunityBoard } from './OpportunityBoard';
 import { ProjectBoard } from './ProjectBoard';
+import { PomoStatsBoard, type DashboardPage } from './PomoStats';
 import { fmtDate, todayStr, nowFmt, calcNextRemindDate, getTodayUniverse, getTodayTasks, isDoneToday, isSkipToday, overdueDays } from '../data/taskLogic';
 import { t, tArr, isEnglish } from '../i18n';
 import { UI_TEXT } from '../constants';
@@ -257,14 +258,15 @@ export class DashboardView extends ItemView {
 	// Project overview state (renderer extracted into ProjectBoard)
 	public selectedProject: string | null = null;
 
-	// Which top-level page is currently shown (home / project overview / opportunity board)
-	public currentPage: 'home' | 'project' | 'opportunity' = 'home';
+	// Which top-level page is currently shown (home / project overview / opportunity board / pomodoro stats)
+	public currentPage: DashboardPage = 'home';
 
 	public taskStore: TaskStore;
 	private dashboardStore: DashboardStore;
 	private storeUnsub: (() => void) | null = null;
 	private oppBoard: OpportunityBoard;
 	private projectBoard: ProjectBoard;
+	private pomoStats: PomoStatsBoard;
 
 	/* ---- 番茄钟（状态提升到 plugin.pomoState，主页卡片与状态栏共用） ---- */
 	private adPomoTimer: number | null = null;
@@ -281,6 +283,7 @@ export class DashboardView extends ItemView {
 		this.dashboardStore = new DashboardStore(this.taskStore);
 		this.oppBoard = new OpportunityBoard(this);
 		this.projectBoard = new ProjectBoard(this);
+		this.pomoStats = new PomoStatsBoard(this);
 	}
 
 	/** Theme actually in effect for the dashboard right now. */
@@ -542,7 +545,8 @@ export class DashboardView extends ItemView {
 	private refreshHeatmap(): void {
 		// 直接复用现有卡片（getOrCreateCard 会命中并清空旧卡子节点），不要先 remove 再重建——
 		// 重建会丢掉卡片的 --cols/--rows（回退 1×1），且造成无谓的重排闪烁。
-		if (!this.boardEl) return;
+		// 仅在首页时刷新：统计页（pomodoro）等其它页面共用 boardEl，不能往里建首页卡片。
+		if (!this.boardEl || this.currentPage !== 'home') return;
 		this.renderHeatmap(this.boardEl);
 	}
 
@@ -1266,13 +1270,14 @@ export class DashboardView extends ItemView {
 		await this.projectBoard.refresh();
 	}
 
-	private async showDashboard(): Promise<void> {
+	async showDashboard(): Promise<void> {
 		if (!this.boardEl) return;
 		// 进入首页前确保退出可能的编辑态（修复「切页未退出编辑态」残留）
 		this.exitEditMode();
 		this.boardEl.empty();
 		this.boardEl.removeClass('po-board');
 		this.boardEl.removeClass('op-board');
+		this.boardEl.removeClass('ps-board');
 		this.boardEl.addClass('ad-board');
 		this.currentPage = 'home';
 		// 按注册表渲染全部启用模块（顺序/显隐由 settings.homeModules 决定）
@@ -3377,7 +3382,15 @@ export class DashboardView extends ItemView {
 		const card = this.getOrCreateCard(board, 'ad-card ad-b-pomodoro');
 		const w = (this.plugin.settings.pomodoro?.workMin ?? 25);
 		const b = (this.plugin.settings.pomodoro?.breakMin ?? 5);
-		this.cardHead(card, '\u25F7', t('home.modules.pomodoro'), `${w} / ${b}`);
+		// 卡头右侧：「工作 / 休息」分钟数提示 +「统计」按钮（进入番茄钟统计页）
+		const headExtra = createDiv({ cls: 'ad-pomo__headextra' });
+		headExtra.createSpan({ cls: 'ad-card__hint', text: `${w} / ${b}` });
+		const statsBtn = headExtra.createEl('button', { cls: 'ad-pomo__stats', text: t('home.pomoStatsBtn') });
+		statsBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			void this.pomoStats.show();
+		});
+		this.cardHead(card, '\u25F7', t('home.modules.pomodoro'), undefined, headExtra);
 		const p = card.createDiv({ cls: 'ad-pomo' });
 		const modeEl = p.createDiv({ cls: 'ad-pomo__mode', text: this.plugin.pomoState.mode === 'work' ? t('home.pomoWork') : t('home.pomoBreak') });
 		p.createDiv({ cls: 'ad-pomo__time', text: this.pomoTimeText() });
@@ -3459,6 +3472,12 @@ export class DashboardView extends ItemView {
 		if (left <= 0) {
 			// 完成一段 → 声音提醒 + 自动切到下一段并停止，等待用户手动开始
 			const wasWork = this.plugin.pomoState.mode === 'work';
+			// 完成一轮工作 → 追加专注记录（best-effort），统计页正打开时同步刷新
+			if (wasWork) {
+				const workMs = this.pomoWorkMs();
+				const doneAt = this.plugin.pomoState.endTime;
+				void this.plugin.recordPomoSession(workMs, doneAt).then(() => this.pomoStats.refreshIfVisible());
+			}
 			this.plugin.pomoState.mode = wasWork ? 'break' : 'work';
 			this.plugin.pomoState.running = false;
 			this.plugin.pomoState.endTime = 0;
